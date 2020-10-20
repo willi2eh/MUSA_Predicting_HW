@@ -1,0 +1,544 @@
+---
+title: "MUSA 508 TOD HW"
+author: "Liz Williams"
+date: "September 25th, 2020"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Introduction
+
+San Francisco, CA is known for its high rent and cost of living. It is one of the most expensive rental markets in the country, which has been caused by many factors including lack of housing stock and zoning laws (https://www.huffpost.com/entry/san-francisco-housing-crisis_n_5750a95ee4b0eb20fa0d682e). This policy brief seeks to explore the value of transit-rich neighborhoods in such an expensive city. This brief examines if households in the city of San Francisco, CA value neighborhoods near the MUNI Metro light rail stations compared to others. This brief seeks to understand characteristics of those living close to transit stops and investigates if households are willing to pay more rent to live near transit stops. Further, this brief explores how these trends have changed from 2010 to 2017. It could be hypothesized that people would be willing to pay more to live closer to public transit, but this policy brief examines if that hypothesis holds in a city like San Francisco, CA. 
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(kableExtra)
+
+options(scipen=999)
+options(tigris_class = "sf")
+```
+
+## Load themes 
+```{r load_themes}
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.text.x = element_text(size = 14))
+}
+
+plotTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=12),
+    axis.title = element_text(size=12),
+    axis.text = element_text(size=10),
+    plot.background = element_blank(),
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    strip.text.x = element_text(size = 14)
+  )
+}
+```
+
+## Load quintile breaks function
+```{r load_breaks}
+
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) {
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  } else if (rnd == FALSE | rnd == F) {
+    as.character(formatC(quantile(df[[variable]]), digits = 3),
+                 c(.01,.2,.4,.6,.8), na.rm=T)
+  }
+}
+q5 <- function(variable) {as.factor(ntile(variable, 5))}
+```
+
+## Load color palette
+```{r load_palette}
+
+palette5 <- c("#f0f9e8","#bae4bc","#7bccc4","#43a2ca","#0868ac")
+
+```
+
+## Load API Key - Liz
+```{r load_api_key, message = FALSE}
+census_api_key("d8b938a81d19a2811d021f339295fbf6135f7d36", overwrite = TRUE)
+```
+
+# Load the data
+```{r load_data, message=FALSE, warning=FALSE, results=FALSE}
+
+# ---- 2010 Census Data ----
+tracts10 <- 
+  get_acs(geography = "tract", variables = c("B25026_001E","B02001_002E","B15001_050E",
+                                             "B15001_009E","B19013_001E","B25058_001E",
+                                             "B06012_002E"), 
+          year=2010, state=06, county=075, geometry=T, output="wide") %>%
+  st_transform('ESRI:102643') %>%
+  filter(NAME != "Census Tract 179.02, San Francisco County, California") %>%
+  filter(NAME != "Census Tract 9804.01, San Francisco County, California") %>%
+  rename(TotalPop = B25026_001E, 
+         Whites = B02001_002E,
+         FemaleBachelors = B15001_050E, 
+         MaleBachelors = B15001_009E,
+         MedHHInc = B19013_001E, 
+         MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop),0),
+         pctPoverty = ifelse(TotalPop > 0, round(TotalPoverty / TotalPop,2), 0),
+         year = "2010") %>%
+  dplyr::select(-Whites, -FemaleBachelors, -MaleBachelors, -TotalPoverty)
+
+# ---- 2017 Census Data -----
+tracts17 <- 
+  get_acs(geography = "tract", variables = c("B25026_001E","B02001_002E","B15001_050E",
+                                             "B15001_009E","B19013_001E","B25058_001E",
+                                             "B06012_002E"), 
+          year=2017, state=06, county=075, geometry=T, output="wide") %>%
+  st_transform('ESRI:102643') %>%
+  filter(NAME != "Census Tract 179.02, San Francisco County, California") %>%
+  filter(NAME != "Census Tract 9804.01, San Francisco County, California") %>%
+  rename(TotalPop = B25026_001E, 
+         Whites = B02001_002E,
+         FemaleBachelors = B15001_050E, 
+         MaleBachelors = B15001_009E,
+         MedHHInc = B19013_001E, 
+         MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop),0),
+         pctPoverty = ifelse(TotalPop > 0, round(TotalPoverty / TotalPop, 2), 0),
+         year = "2017") %>%
+  dplyr::select(-Whites, -FemaleBachelors, -MaleBachelors, -TotalPoverty) 
+
+# --- Combining 10 and 17 data ----
+
+allTracts <- rbind(tracts10,tracts17)
+
+#---- San Francisco Transit Data  ----
+# Data set for all public transit in CA - filter for SF MUNI Light Rail
+
+MuniStops <- 
+  rbind(
+    st_read("https://opendata.arcgis.com/datasets/efd75b7bb3c04dbda06c6e7cd73e9336_0.geojson") %>% 
+      select(agencyname, station_na, mode) %>%
+      filter(agencyname == 'San Francisco MUNI') %>%
+    st_transform(st_crs(tracts10)))
+
+```
+
+# Geoprocessing
+
+## Muni stop unioned buffer
+```{r union_buffer}
+muniBuffers <- 
+  rbind(
+    st_buffer(MuniStops, 2640) %>%
+      mutate(Legend = "Buffer") %>%
+      dplyr::select(Legend),
+    st_union(st_buffer(MuniStops, 2640)) %>%
+      st_sf() %>%
+      mutate(Legend = "Unioned Buffer"))
+
+buffer <- filter(muniBuffers, Legend=="Unioned Buffer")
+```
+
+## Create TOD and non TOD areas
+```{r TOD_area, message=FALSE, warning=FALSE}
+
+allTracts.group <- 
+  rbind(
+    st_centroid(allTracts)[buffer,] %>%
+      st_drop_geometry() %>%
+      left_join(allTracts) %>%
+      st_sf() %>%
+      mutate(TOD = "TOD"),
+    st_centroid(allTracts)[buffer, op = st_disjoint] %>%
+      st_drop_geometry() %>%
+      left_join(allTracts) %>%
+      st_sf() %>%
+      mutate(TOD = "Non-TOD")) %>%
+  mutate(MedRent.inf = ifelse(year == "2010", MedRent * 1.14, MedRent)) %>%
+  mutate(MedHHInc.inf = ifelse(year == "2010", MedHHInc * 1.14, MedHHInc)) %>% 
+  mutate(pctWhite = pctWhite*100) %>%
+  mutate(pctPoverty = pctPoverty*100)
+
+```
+
+# Census variables across time and space (TOD vs. non-TOD)
+
+## Median Rent
+```{r MedRent}
+ggplot(allTracts.group)+
+  geom_sf(data = st_union(tracts10))+
+  geom_sf(aes(fill = q5(MedRent.inf))) +
+  geom_sf(data = buffer, fill = "transparent", color = "red")+
+  scale_fill_manual(values = palette5,labels = qBr(allTracts.group, "MedRent.inf"),name = "Rent\n(Quintile Breaks)") +
+  labs(title = "Median Rent 2010-2017", subtitle = "Real 2017 Dollars") +
+  facet_wrap(~year)+mapTheme() +
+  theme(plot.title = element_text(size=22))
+
+```
+
+Overall, there are more darker colored census tracts in 2017, denoting that overall rent in the city has increased from 2010. Many of the areas with the highest rent in 2010 remained the areas with the highest rent in 2017. There do not seem to be any obvious relationships between tracts near transit stops and rent price, as seen by the high rents in the north part of the city that are not near any metro stations, but also high rent areas near transit stops on the eastern side of the city. Some lower rent tracts are close to metro stations in the south and central parts of the city. 
+
+## Median Household Income
+```{r MedHHInc}
+ggplot(allTracts.group)+
+  geom_sf(data = st_union(tracts10))+
+  geom_sf(aes(fill = q5(MedHHInc.inf))) +
+  geom_sf(data = buffer, fill = "transparent", color = "red")+
+  scale_fill_manual(values = palette5,labels = qBr(allTracts.group, "MedHHInc.inf"),name = "Median HH Income\n(Quintile Breaks)") +
+  labs(title = "Median Household Income 2010-2017", subtitle = "Real 2017 Dollars") +
+  facet_wrap(~year)+mapTheme() +
+  theme(plot.title = element_text(size=22))
+
+```
+
+Similarly to rent, it can be seen that overall median household income in the city has increased from 2010 to 2017. The increase does not seem to be related to the location of metro stations. 
+
+## Percent White
+```{r pctWhite}
+ggplot(allTracts.group)+
+  geom_sf(data = st_union(tracts10))+
+  geom_sf(aes(fill = q5(pctWhite))) +
+  geom_sf(data = buffer, fill = "transparent", color = "red")+
+  scale_fill_manual(values = palette5,labels = qBr(allTracts.group, "pctWhite"),name = "Percent White\n(Quintile Breaks)") +
+  labs(title = "Percent White 2010-2017", subtitle = "Percentage") +
+  facet_wrap(~year)+mapTheme() +
+  theme(plot.title = element_text(size=22))
+```
+
+Census tracts with a higher proportion of white individuals are mostly in central and north San Francisco. The northern part of the city is not closely connected to any metro stations.
+
+## Percent_Poverty
+
+```{r pctpoverty}
+ggplot(allTracts.group)+
+  geom_sf(data = st_union(tracts10))+
+  geom_sf(aes(fill = q5(pctPoverty))) +
+  geom_sf(data = buffer, fill = "transparent", color = "red")+
+  scale_fill_manual(values = palette5,labels = qBr(allTracts.group, "pctPoverty"),name = "Percent Poverty\n(Quintile Breaks)") +
+  labs(title = "Percent Poverty 2010-2017", subtitle = "Percentage") +
+  facet_wrap(~year)+mapTheme() +
+  theme(plot.title = element_text(size=22))
+
+```
+
+The census tracts with the highest percent of poverty are in the northeast and southeast of the city. These areas are near transit stops. The tracts with the lowest percent of poverty seem to be similar to the tracts with the highest proportion of white residents. The northern part of the city that is not near transit stations has a low percentage of poverty, large white population, and high income and rent. 
+
+# Grouped bar plot 
+```{r grouped_bar, message=FALSE}
+allTracts.Summary <- 
+  st_drop_geometry(allTracts.group) %>%
+  group_by(year, TOD) %>%
+  summarize(Rent = mean(MedRent, na.rm = T),
+            MedHHInc = mean(MedHHInc, na.rm = T),
+            Pct_White = mean(pctWhite, na.rm = T),
+            Pct_Poverty = mean(pctPoverty, na.rm = T), 
+            Population = mean(TotalPop, na.rm=T))
+
+allTracts.Summary %>%
+  gather(Variable, Value, -year, -TOD) %>%
+  ggplot(aes(year, Value, fill = TOD)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~Variable, scales = "free", ncol=5) +
+  scale_fill_manual(values = c("#bae4bc", "#0868ac")) +
+  labs(title = "Indicator Differences Across Time and Space") +
+  plotTheme() + theme(legend.position="bottom")
+```
+
+# Table
+```{r TOD_table, message=FALSE}
+allTracts.Summary %>%
+  unite(year.TOD, year, TOD, sep = ": ", remove = T) %>%
+  gather(Variable, Value, -year.TOD) %>%
+  mutate(Value = round(Value, 2)) %>%
+  spread(year.TOD, Value) %>%
+  kable() %>%
+  kable_styling() %>%
+  footnote(general_title = "\n",
+           general = "Table 1")
+```
+
+The bar plot and table both show that median household income and rent increased in both TOD and non-TOD tracts from 2010 to 2017. Rent and median household income are higher in non-TOD areas. Percent poverty increased in non-TOD tracts, but remained lower than TOD tracts from 2010 to 2017. The percentage of white people in both TOD and non-TOD tracts decreased. Population is also included here, and it can be seen that population increased in both TOD and non-TOD tracts. 
+
+# Population and rent within 0.5 mile of each transit station
+
+```{r population, message=FALSE, warning=FALSE}
+
+# Population in 2017
+selectCentroids <-
+  st_centroid(tracts17)[buffer,] %>%
+  st_drop_geometry() %>%
+  left_join(dplyr::select(tracts17, GEOID)) %>%
+  st_sf() %>%
+  dplyr::select(TotalPop, MedRent) %>%
+  mutate(Selection_Type = "Select by Centroids")
+centers <- st_centroid(selectCentroids)
+
+ggplot() +
+  geom_sf(data = allTracts.group, fill = "white") +
+  geom_sf(data = centers, aes(size = TotalPop), shape = 21,
+fill = "purple", alpha = 0.7, show.legend = "point") +
+  scale_size_continuous(range = c(0, 8))
+```
+```{r rent, message=FALSE, warning=FALSE}
+
+# Median Rent in 2017 
+centers <- st_centroid(selectCentroids)
+
+ggplot() + 
+  geom_sf(data = allTracts.group, fill = "white") + 
+  geom_sf(data = centers, aes(size = MedRent), shape = 21, 
+          fill = "lightblue", alpha = 0.7, show.legend = "point") + 
+  scale_size_continuous(range = c(0, 8))
+```
+
+These graudated symbol maps show us the different rent prices and population sizes of tracts near transit stops. When comparing these maps, it seems some of the areas with higher rent have lower population proportions. However, it is of note that the population and rent depicted are representative of the tracts as a whole, and only those tracts that were within half of a mile of transit stations are depicted. We do not know the population distribution within the tracts.
+
+# Mean rent as a function of distance to metro stations
+
+```{r multipleringbuffer, message=FALSE, warning=FALSE}
+
+multipleRingBuffer <- function(inputPolygon, maxDistance, interval) 
+{
+  #create a list of distances that we'll iterate through to create each ring
+  distances <- seq(0, maxDistance, interval)
+  #we'll start with the second value in that list - the first is '0'
+  distancesCounter <- 2
+  #total number of rings we're going to create
+  numberOfRings <- floor(maxDistance / interval)
+  #a counter of number of rings
+  numberOfRingsCounter <- 1
+  #initialize an otuput data frame (that is not an sf)
+  allRings <- data.frame()
+  
+  #while number of rings  counteris less than the specified nubmer of rings
+  while (numberOfRingsCounter <= numberOfRings) 
+  {
+    #if we're interested in a negative buffer and this is the first buffer
+    #(ie. not distance = '0' in the distances list)
+    if(distances[distancesCounter] < 0 & distancesCounter == 2)
+    {
+      #buffer the input by the first distance
+      buffer1 <- st_buffer(inputPolygon, distances[distancesCounter])
+      #different that buffer from the input polygon to get the first ring
+      buffer1_ <- st_difference(inputPolygon, buffer1)
+      #cast this sf as a polygon geometry type
+      thisRing <- st_cast(buffer1_, "POLYGON")
+      #take the last column which is 'geometry'
+      thisRing <- as.data.frame(thisRing[,ncol(thisRing)])
+      #add a new field, 'distance' so we know how far the distance is for a give ring
+      thisRing$distance <- distances[distancesCounter]
+    }
+    
+    
+    #otherwise, if this is the second or more ring (and a negative buffer)
+    else if(distances[distancesCounter] < 0 & distancesCounter > 2) 
+    {
+      #buffer by a specific distance
+      buffer1 <- st_buffer(inputPolygon, distances[distancesCounter])
+      #create the next smallest buffer
+      buffer2 <- st_buffer(inputPolygon, distances[distancesCounter-1])
+      #This can then be used to difference out a buffer running from 660 to 1320
+      #This works because differencing 1320ft by 660ft = a buffer between 660 & 1320.
+      #bc the area after 660ft in buffer2 = NA.
+      thisRing <- st_difference(buffer2,buffer1)
+      #cast as apolygon
+      thisRing <- st_cast(thisRing, "POLYGON")
+      #get the last field
+      thisRing <- as.data.frame(thisRing$geometry)
+      #create the distance field
+      thisRing$distance <- distances[distancesCounter]
+    }
+    
+    #Otherwise, if its a positive buffer
+    else 
+    {
+      #Create a positive buffer
+      buffer1 <- st_buffer(inputPolygon, distances[distancesCounter])
+      #create a positive buffer that is one distance smaller. So if its the first buffer
+      #distance, buffer1_ will = 0. 
+      buffer1_ <- st_buffer(inputPolygon, distances[distancesCounter-1])
+      #difference the two buffers
+      thisRing <- st_difference(buffer1,buffer1_)
+      #cast as a polygon
+      thisRing <- st_cast(thisRing, "POLYGON")
+      #geometry column as a data frame
+      thisRing <- as.data.frame(thisRing[,ncol(thisRing)])
+      #add teh distance
+      thisRing$distance <- distances[distancesCounter]
+    }  
+    
+    #rbind this ring to the rest of the rings
+    allRings <- rbind(allRings, thisRing)
+    #iterate the distance counter
+    distancesCounter <- distancesCounter + 1
+    #iterate the number of rings counter
+    numberOfRingsCounter <- numberOfRingsCounter + 1
+  }
+  
+  #convert the allRings data frame to an sf data frame
+  allRings <- st_as_sf(allRings)
+}
+
+square <-  
+    st_sfc(st_polygon(list(cbind(c(0,3,3,0,0),c(0,0,3,3,0))))) %>%
+    st_sf()
+buffers <- multipleRingBuffer(square, 10, 1)
+#ggplot() + geom_sf(data = buffers, aes(fill = distance))
+
+#use multiple ring buffer function
+allTracts.rings <-
+  st_join(st_centroid(dplyr::select(allTracts, GEOID, year)), 
+          multipleRingBuffer(st_union(MuniStops), 47520, 2640)) %>%
+  st_drop_geometry() %>%
+  left_join(dplyr::select(allTracts, GEOID, MedRent, year), 
+            by=c("GEOID"="GEOID", "year"="year")) %>%
+  st_sf() %>%
+  mutate(distance = distance / 5280) #convert to miles
+
+allTracts.rings_summary <-
+  allTracts.rings %>%
+  st_drop_geometry() %>%
+  group_by(distance, year) %>%
+  summarize(Rent = mean(MedRent, na.rm=T)) 
+
+#plot graph 
+ggplot(data=allTracts.rings_summary,
+       aes(x = distance, y = Rent, colour = year)) +
+  geom_point() +
+  geom_line()
+
+```
+
+This graph shows that for both 2010 and 2017, average rent increased as distance from metro stations increased. In 2017, there was a large increase in the average rent when going from 2 to 2.5 miles away from metro stations. 
+
+# Burglaries, transit access, and rent prices 
+
+## Download and convert data 
+```{r load_crime_data, message=FALSE, warning=FALSE}
+# I wasn't able to get more than 1000 rows using st_read (I think they limit the pull amount for general users), so set up SF open data account and used this suggested code instead 
+# Pulled only incidents with category = burglary
+
+library("RSocrata")
+
+df <- read.socrata(
+  "https://data.sfgov.org/resource/tmnf-yvry.json?category=BURGLARY",
+  app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
+  email     = "willi2eh@upenn.edu",
+  password  = "Triscuit3!"
+)
+
+```
+
+```{r convert_df}
+# convert to SF object
+SF_crime_17 <- st_as_sf(df, coords = c("x", "y"), 
+                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
+  select(pdid, category, date, time) %>%
+  filter((date > as.POSIXct("2017-01-01")) & (date < as.POSIXct("2018-01-01"))) %>% 
+  st_transform(st_crs(tracts10))
+
+SF_crime_10 <- st_as_sf(df, coords = c("x", "y"), 
+                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
+  select(pdid, category, date, time) %>%
+  filter((date > as.POSIXct("2010-01-01")) & (date < as.POSIXct("2011-01-01"))) %>% 
+  st_transform(st_crs(tracts10))
+
+```
+
+## Explore relationship between transit, rent, and crime
+
+```{r rent_crime_17}
+
+# Plot the crime point data for 2017 and Med Rent in 2017
+ggplot() + 
+  #geom_sf(data = allTracts.group, fill = "white") + 
+  geom_sf(data = tracts17, aes(fill = q5(MedRent))) +
+  scale_fill_manual(values = palette5, labels = qBr(tracts17, "MedRent"),name = "Median Rent\n(Quintile Breaks)") +
+  geom_sf(data=SF_crime_17, size=0.4) +
+  labs(title = "Median Rent and Burglary Reports 2017") +
+  theme(plot.title = element_text(size=18))
+
+```
+```{r rent_crime_10}
+
+tracts10 <- tracts10 %>% mutate(MedRent.inf = MedRent * 1.14) 
+
+# Plot the crime point data for 2010 and Med Rent in 2010
+ggplot() + 
+  #geom_sf(data = allTracts.group, fill = "white") + 
+  geom_sf(data = tracts10, aes(fill = q5(MedRent.inf))) +
+  scale_fill_manual(values = palette5, labels = qBr(tracts10, "MedRent.inf"),name = "Median Rent\n(Quintile Breaks)") +
+  geom_sf(data=SF_crime_10, size=0.4) +
+  labs(title = "Median Rent and Burglary Reports 2010") +
+  theme(plot.title = element_text(size=18))
+```
+
+From earlier analyses, higher incomes and rents were seen in the northern part of the city, not near transit. It was hypothesized that burglaries would happen more frequently in those areas in the northern part of the the city. As seen in the above two graphs, burglaries in San Francisco occur most often in the northeastern part of the city. This is true for both 2010 and 2017. While the hypothesis was off, the northeastern area is the central downtown shopping district, which might explain the higher number of burglaries in the areas for 2010 and 2017.
+
+```{r transit_crime_2017}
+
+ggplot() + 
+  geom_sf(data = allTracts.group, fill = "white") + 
+  geom_sf(data=SF_crime_17, size=0.5) +
+  geom_sf(data = buffer, fill = "transparent", color = "red", size=1.5) +
+  labs(title = "Transit Stops and Burglary Reports 2017") +
+  theme(plot.title = element_text(size=18))
+
+```
+
+```{r transit_crime_2010}
+
+ggplot() + 
+  geom_sf(data = allTracts.group, fill = "white") + 
+  geom_sf(data=SF_crime_10, size=0.5) +
+  geom_sf(data = buffer, fill = "transparent", color = "red", size=1.5) +
+  labs(title = "Transit Stops and Burglary Reports 2010") +
+  theme(plot.title = element_text(size=18))
+
+```
+
+The above graphs of burglary incidents in 2010 and 2017 and the areas within half a mile of metro stops shows there is not much of a relationship between metro stops and burglary attempts. Again, the burglary attempts are centered around the northeastern part of the city. This part of the city is near transit stops, but the other parts of the city near transit stops do not see as many burglaries. 
+
+# Conclusions
+
+This policy brief explores the value of transit-rich neighborhoods in San Francisco, CA in 2010 and again in 2017. It examines the characteristics of the census tracts near MUNI light rail stations and the location of burglary incidents in the city. Due to higher rent costs and median household incomes in parts of the city not near metro stations and higher percentages of poverty near stations, we cannot conclude that households are willing to pay more rent to live near transit stops. We found that the northern part of the city that is not near transit stations has a low percentage of poverty, large white population, high income and rent, and saw few burglary incidents. Further, there was not an obvious relationship between burglaries and transit stations. Most burglaries occurred in the northeastern part of the city. From 2010 to 2017, we saw that median household income, rent, and population increased in both TOD and non-TOD tracts. In further analyses, it would be interesting to look at commutes. Due higher rents being seen farther from transit stops, it would be interesting to see how and where people travel for work. Potentially, because San Francisco is such an expensive city to live in, the people that actually live in the city do not rely on traditional public transit means to get to work (i.e. they have a car, work from home, etc.). 
+
+It is important to note that these analyses use census tract level data and include certain scale biases. TOD or non-TOD distinctions were based off of the centriods of census tracts, which was a subjective choice and has implications for the conclusions found in this brief. Further, in this analysis up to the distance of 0.5 miles was deemed "close" to transit stops. This decision also includes a judgement by the researcher and different distances may have different value for different people. All this to say, we cannot be absolutely certain about the conclusions here given some spatial biases; however, I think it is safe to say the residents of San Francisco don't value transit rich neighborhoods in the way other cities do. 
+
