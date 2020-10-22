@@ -24,6 +24,8 @@ library(gridExtra)
 library(knitr)
 library(kableExtra)
 library(tidycensus)
+library(spatstat)
+
 # functions
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
@@ -412,7 +414,7 @@ ggplot(correlation.long, aes(Value, countRobberies)) +
 
 final_net %>%
   ggplot(aes(countRobberies)) + 
-    geom_histogram(bins = 5, colour="black") +
+    geom_histogram(bins = 10, colour="black") +
   scale_x_continuous(breaks = seq(0, 5, by = 1)) + 
     labs(title="Distribution of Robbery Counts", 
          x="countRobberies", y="Count") 
@@ -570,6 +572,25 @@ reg.summary %>%
 
 
 # The map comparing kernel density to risk predictions for the next year's crime.
+
+```{r}
+burg_ppp <- as.ppp(st_coordinates(robberies), W = st_bbox(final_net))
+
+#spatstat.options(npixel=c(1000,1000))
+burg_KD <- spatstat::density.ppp(burg_ppp, 1000)
+
+as.data.frame(burg_KD) %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
+  aggregate(., final_net, mean) %>%
+   ggplot(color=NA) +
+     geom_sf(aes(fill=value)) +
+     geom_sf(data = sample_n(robberies, 1500), size = .5) +
+     scale_fill_viridis(name = "Density") +
+     labs(title = "Kernel density of 2017 burglaries") +
+     mapTheme()
+```
+
+
 ```{r}
 # Download 2018 robberies
 robberies18 <- st_read("https://opendata.arcgis.com/datasets/38ba41dd74354563bce28a359b59324e_0.geojson") %>%
@@ -584,7 +605,65 @@ robberies18 <- st_read("https://opendata.arcgis.com/datasets/38ba41dd74354563bce
 
 ```
 
+```{r}
+burg_ppp <- as.ppp(st_coordinates(robberies), W = st_bbox(final_net))
+
+#spatstat.options(npixel=c(1000,1000))
+burg_KD <- spatstat::density.ppp(burg_ppp, 1000)
+
+burg_KDE_sf <- as.data.frame(burg_KD) %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
+  aggregate(., final_net, mean) %>%
+  mutate(label = "Kernel Density",
+         Risk_Category = ntile(value, 100),
+         Risk_Category = case_when(
+           Risk_Category >= 90 ~ "90% to 100%",
+           Risk_Category >= 70 & Risk_Category <= 89 ~ "70% to 89%",
+           Risk_Category >= 50 & Risk_Category <= 69 ~ "50% to 69%",
+           Risk_Category >= 30 & Risk_Category <= 49 ~ "30% to 49%",
+           Risk_Category >= 1 & Risk_Category <= 29 ~ "1% to 29%")) %>%
+  cbind(
+    aggregate(
+      dplyr::select(robberies18) %>% mutate(burgCount = 1), ., sum) %>%
+    mutate(burgCount = replace_na(burgCount, 0))) %>%
+  dplyr::select(label, Risk_Category, burgCount)
+```
+
+```{r}
+burg_risk_sf <-
+  filter(reg.summary, Regression == "Spatial LOGO-CV: Spatial Process") %>%
+  mutate(label = "Risk Predictions",
+         Risk_Category = ntile(Prediction, 100),
+         Risk_Category = case_when(
+           Risk_Category >= 90 ~ "90% to 100%",
+           Risk_Category >= 70 & Risk_Category <= 89 ~ "70% to 89%",
+           Risk_Category >= 50 & Risk_Category <= 69 ~ "50% to 69%",
+           Risk_Category >= 30 & Risk_Category <= 49 ~ "30% to 49%",
+           Risk_Category >= 1 & Risk_Category <= 29 ~ "1% to 29%")) %>%
+  cbind(
+    aggregate(
+      dplyr::select(robberies18) %>% mutate(burgCount = 1), ., sum) %>%
+      mutate(burgCount = replace_na(burgCount, 0))) %>%
+  dplyr::select(label,Risk_Category, burgCount)
+```
+
+```{r}
+rbind(burg_KDE_sf, burg_risk_sf) %>%
+  na.omit() %>%
+  gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
+  ggplot() +
+    geom_sf(aes(fill = Risk_Category), colour = NA) +
+    geom_sf(data = sample_n(robberies18, 750), size = .5, colour = "black") +
+    facet_wrap(~label, ) +
+    scale_fill_viridis(discrete = TRUE) +
+    labs(title="Comparison of Kernel Density and Risk Predictions",
+         subtitle="2017 robbery risk predictions; 2018 robberies") +
+    mapTheme()
+```
+
+
 # The bar plot making this comparison.
+
 
 # Two paragraphs on why or why not you would recommend your algorithm be put into production.
 
