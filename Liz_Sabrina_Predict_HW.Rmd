@@ -161,6 +161,10 @@ police_stations <- st_read("https://opendata.arcgis.com/datasets/9e465c1e6dfd460
 neighborhoods <- st_read("https://opendata.arcgis.com/datasets/f6c703ebe2534fc3800609a07bad8f5b_17.geojson") %>%
     st_transform('ESRI:102685')
 
+public_housing_areas <- st_read("https://opendata.arcgis.com/datasets/7f40eee5afaa4210959c2a55328a0cab_15.geojson") %>%
+    st_transform('ESRI:102685') %>%
+    dplyr::select(geometry) %>%
+    mutate(Legend = "public_housing_areas")
 
 ```
 
