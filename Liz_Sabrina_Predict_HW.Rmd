@@ -64,6 +64,9 @@ nn_function <- function(measureFrom,measureTo,k) {
 
 ## Load API Key - Liz
 census_api_key("d8b938a81d19a2811d021f339295fbf6135f7d36", overwrite = TRUE)
+
+## Load API Key - Sabrina 
+census_api_key("30bae866445f7bea5ea57b8f5fba60b11b8b145e", overwrite = TRUE)
 ```
 
 # Setup 
@@ -164,7 +167,7 @@ neighborhoods <- st_read("https://opendata.arcgis.com/datasets/f6c703ebe2534fc38
 ## Make the fishnet
 ```{r}
 ## using {sf} to create the grid
-## Note the `.[chicagoBoundary] %>% ` line. This is needed to clip the grid to our data
+## Note the `.[DCBoundary] %>% ` line. This is needed to clip the grid to our data
 fishnet <- 
   st_make_grid(DCboundary,
                cellsize = 500, 
