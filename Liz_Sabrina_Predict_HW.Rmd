@@ -8,6 +8,9 @@ output:
     toc_float: true
 ---
 
+# Introduction 
+For this project, we are building a geospatial risk predictive model of robberies that occur in D.C. We perform data wrangling on robberies and other risk factor data into geospatial features, correlate the exposure to risk factors and robberies, and then estimate models to predict robberies latent risk. The models are then validated in part by comparing predictions to a standard, business-as-usual measure of geospatial crime risk. The model uses past 2017 robberies data from the city of D.C. to predict future locations of robberies. 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
 
@@ -25,6 +28,10 @@ library(knitr)
 library(kableExtra)
 library(tidycensus)
 library(spatstat)
+library(dplyr, warn.conflicts = FALSE)
+
+# Suppress summarise info
+options(dplyr.summarise.inform = FALSE)
 
 # functions
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
@@ -71,10 +78,10 @@ census_api_key("d8b938a81d19a2811d021f339295fbf6135f7d36", overwrite = TRUE)
 census_api_key("30bae866445f7bea5ea57b8f5fba60b11b8b145e", overwrite = TRUE)
 ```
 
-# Setup 
-## Read in the data from DC
+# Data Wrangling
+We use the R Socrata package to load data from the D.C. Open Data Portal, including police service areas, D.C. city boundaries, robberies and risk factors. 
 
-```{r}
+```{r setup, include=FALSE}
 
 robberies <- st_read("https://opendata.arcgis.com/datasets/6af5cb8dc38e4bcbac8168b27ee104aa_38.geojson") %>%
   filter(OFFENSE == "ROBBERY") %>%
@@ -164,13 +171,19 @@ neighborhoods <- st_read("https://opendata.arcgis.com/datasets/f6c703ebe2534fc38
     st_transform('ESRI:102685')
 
 public_housing_areas <- st_read("https://opendata.arcgis.com/datasets/7f40eee5afaa4210959c2a55328a0cab_15.geojson") %>%
+    st_transform('ESRI:102685') 
+
+liquor_licenses <- st_read("https://opendata.arcgis.com/datasets/cabe9dcef0b344518c7fae1a3def7de1_5.geojson") %>%
     st_transform('ESRI:102685') %>%
     dplyr::select(geometry) %>%
-    mutate(Legend = "public_housing_areas")
+    mutate(Legend = "liquor_licenses")
+
+
 
 ```
 
-## Make the fishnet
+# Creating the fishnet
+We create a fishnet with 500 x 500 foot grid cells. The fishnet is used to treat crime risk as a phenomenon that varies across space, and to aggregate point-level data. 
 ```{r}
 ## using {sf} to create the grid
 ## Note the `.[DCBoundary] %>% ` line. This is needed to clip the grid to our data
@@ -178,12 +191,14 @@ fishnet <-
   st_make_grid(DCboundary,
                cellsize = 500, 
                square = TRUE) %>%
-  #.[DCboundary] %>% ## had to add (not in book?) - gets rid of those things in box                           not intersecting boundary
+  #.[DCboundary] %>% ## had to add (not in book?) - gets rid of those things in box not intersecting boundary
   st_sf() %>%
   mutate(uniqueID = rownames(.))
 ```
 
-# A map of your outcome of interest in point form, with some description of what, when, and why you think selection bias may be an issue.
+# Visualizing robberies in D.C. in 2017, and what, when, and why selection bias may be an issue.
+The maps below show the location of robberies that occurred in D.C. in 2017. There appears to be a greater density of robberies happening in the central and eastern parts of the city. 
+There is likely to be selection bias happening, because incidents of robberies shown on the map are dependent on the reporting of suspected robberies. In some areas/ neighborhoods, residents may be more likely to report on robberies than in other areas, which would result in a higher density of robberies that are seen in those areas. There might also be higher incidences of robberies in areas that are more surveilled/ policed compared to others. 
 
 ```{r}
 ggplot() + 
@@ -201,7 +216,8 @@ ggplot(tracts17) +
 
 ```
 
-# A map of your outcome joined to the fishnet.
+# Joined robberies to fishnet
+The figure below shows the count of robberies incidents within each grid cell of the fishnet. This allows us to use the fishnet grid to visualize clusters as robbery hotspots. There appears to be a higher concentration of yellow cells (with higher robbery count) in the central and eastern parts of the city, which corresponds to what we observed in the point data map shown above. 
 
 ```{r}
 ## add a value of 1 to each crime, sum them with aggregate
@@ -217,17 +233,21 @@ crime_net <-
 ggplot() +
   geom_sf(data = crime_net, aes(fill = countRobberies), color = NA) +
   scale_fill_viridis() +
-  labs(title = "Count of Vandalism Incidents for the fishnet") +
+  labs(title = "Count of 2017 Robberies Incidents for the fishnet") +
   mapTheme()
 ```
 
-# A small multiple map of your risk factors in the fishnet (counts, distance and/or other feature engineering approaches).
+# A small multiple map of risk factors in the fishnet (counts, distance and/or other feature engineering approaches).
+Here, risk factors that are deemed to be associated with robbery are identified and selected to build the model. We include the risk factors of abandoned cars, gunshots, sanitation levels, presence of street lights, graffiti, green spaces and establishments with liquor licenses. Selection bias is introduced here, because the selection of features reveal assumptions on what factors lead to higher robbery rates. 
+
+The figure below shows the risk factors by fishnet, which illustrate the spatial processes of how these risk factors are clustered in the city. Liquour licenses and graffiti are mostly clustered in the city centre. Gunshots and abandoned cars appear more clustered in the eastern part of the city. 
+
 
 ```{r}
 
 vars_net <- 
   rbind(abandonedCar, gunshots, sanitation, 
-        streetlights, graffiti, green_spaces) %>%
+        streetlights, graffiti, green_spaces, liquor_licenses) %>%
   st_join(., fishnet, join=st_within) %>%
   st_drop_geometry() %>%
   group_by(uniqueID, Legend) %>%
@@ -258,10 +278,13 @@ do.call(grid.arrange,c(mapList, ncol =3, top = "Risk Factors by Fishnet"))
 ```
 
 ## nn distance 
+The second feature engineering approach we use is to calculate the average nearest neighbor distance to hypothesize a smoother exposure relationship across space. 
 
 ```{r}
 st_c <- st_coordinates
 st_coid <- st_centroid
+st_c_liquor_licenses <- st_c(liquor_licenses)
+st_c_public_housing_areas <- st_c(public_housing_areas)
 
 vars_net <-
   vars_net %>%
@@ -277,7 +300,9 @@ vars_net <-
       streetlights.nn =
         nn_function(st_c(st_coid(vars_net)), st_c(streetlights),3),
       sanitation.nn =
-        nn_function(st_c(st_coid(vars_net)), st_c(sanitation),3))
+        nn_function(st_c(st_coid(vars_net)), st_c(sanitation),3),
+      liquor_licenses.nn = 
+        nn_function(st_c(st_coid(vars_net)), st_c_liquor_licenses,3))
 
 vars_net.long.nn <- 
   dplyr::select(vars_net, ends_with(".nn")) %>%
@@ -299,6 +324,7 @@ do.call(grid.arrange,c(mapList, ncol = 3, top = "Nearest Neighbor risk Factors b
 ```
 
 ## Add distance to downtown as a feature
+Here, we measure the distance to the downtown as a feature, before creating the final net. 
 
 ```{r}
 downtownPoint <-
@@ -321,21 +347,25 @@ ggplot() +
 ```
 
 ## Create the final net
+Here, we combine the crime data with the risk factor data and join the neighborhoods and police service areas to the final fishnet. 
 ```{r}
 final_net <-
   left_join(crime_net, st_drop_geometry(vars_net), by="uniqueID") 
 
 final_net <-
   st_centroid(final_net) %>%
-    st_join(dplyr::select(neighborhoods, NBH_NAMES)) %>%
-    st_join(dplyr::select(PoliceServiceAreas, PSA)) %>%
+    st_join(dplyr::select(neighborhoods, NBH_NAMES), by = "uniqueID") %>%
+    st_join(dplyr::select(PoliceServiceAreas, PSA), by = "uniqueID") %>%
       st_drop_geometry() %>%
       left_join(dplyr::select(final_net, geometry, uniqueID)) %>%
       st_sf() %>%
   na.omit()
 ```
 
-# Local Moran's I-related small multiple map of your outcome (see 4.1)
+# Spatial Process of Dependent Variable (Robberies) 
+## Local Moran's I-related small multiple map of robberies in DC 
+We perform the local Moran's I to test for spatial autocorrelation at a local scale. 
+The figures below plot test statistics from Local Moran's I, including I, the p-value, and significant hotspots, defined as those grid cells with higher local counts than what might otherwise be expected under randomness (p-values <= 0.05). The data frame is then converted to long form for mapping.
 
 ```{r}
 final_net.nb <- poly2nb(as_Spatial(final_net), queen=TRUE)
@@ -421,6 +451,7 @@ final_net %>%
 ```
 
 # A small multiple map of model errors by random k-fold and spatial cross validation.
+Here, we perform spatial cross-validation to determine the generalizability of our geospatial risk model. 
 
 ## Setup cross validation
 ```{r}
@@ -429,11 +460,11 @@ final_net %>%
 
 reg.vars <- c("abandonedCar.nn", "gunshots.nn", "graffiti.nn", 
               "green_spaces.nn", "streetlights.nn", "sanitation.nn", 
-              "downtownDistance")
+              "downtownDistance", "liquor_licenses.nn")
 
 reg.ss.vars <- c("abandonedCar.nn", "gunshots.nn", "graffiti.nn", 
               "green_spaces.nn", "streetlights.nn", "sanitation.nn", 
-              "downtownDistance", "robbery.isSig", "robbery.isSig.dist")
+              "downtownDistance","liquor_licenses.nn", "robbery.isSig", "robbery.isSig.dist")
 ```
 
 
