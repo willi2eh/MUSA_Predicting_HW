@@ -415,7 +415,7 @@ final_net <-
 ```
 
 
-```{r, fig.width=5, fig.height=6}
+```{r, fig.width=12, fig.height=12}
 
 correlation.long <-
   st_drop_geometry(final_net) %>%
@@ -428,7 +428,7 @@ correlation.cor <-
     summarize(correlation = cor(Value, countRobberies, use = "complete.obs"))
     
 ggplot(correlation.long, aes(Value, countRobberies)) +
-  geom_point(size = 0.5) +
+  geom_point(size = 0.1) +
   facet_wrap(~Variable, ncol = 2, scales = "free") +
   geom_text(data = correlation.cor, aes(label = paste("r =", round(correlation, 2))),
             x=-Inf, y=Inf, vjust = 1.5, hjust = -.1) +
@@ -438,7 +438,8 @@ ggplot(correlation.long, aes(Value, countRobberies)) +
   plotTheme()
 ```
 
-# A histogram of your dependent variable.
+# Histogram of robbery counts
+The histogram below shows a distribution of robbery counts, which shows a skewed distribution of countRobberies. As the data is distributed this way, an OLS regression is inappropriate. Therefore, we estimate a poisson regression would be more suitable to model a count outcome like countRobberies.  
 
 ```{r}
 
@@ -453,7 +454,7 @@ final_net %>%
 # A small multiple map of model errors by random k-fold and spatial cross validation.
 Here, we perform spatial cross-validation to determine the generalizability of our geospatial risk model. 
 
-## Setup cross validation
+#Cross-validated poisson regression 
 ```{r}
 
 # Below, goodness of fit metrics are generated for four regressions - two including Just Risk Factors (reg.vars), and a second (reg.ss.vars) includes risk factors plus the Local Moran's I 
@@ -502,9 +503,8 @@ for (i in cvID_list) {
 }
 ```
 
-## Cross validation
 
-```{r}
+```{r, include=FALSE}
 reg.cv <- crossValidate(
   dataset = final_net,
   id = "cvID",
@@ -535,6 +535,8 @@ reg.ss.spatialCV <- crossValidate(
 ```
 
 ## Cross validation metrics
+We use a host of goodness of fit metrics to test for accuracy and generalizability across space, with a focus on the latter. 
+The chart below visualizes the Mean Absolute Error for each fold across each regression. The spatial process features seem to reduce errors for the neighborhood hold-outs that have higher MAEs. 
 
 ```{r}
 reg.summary <- 
@@ -566,13 +568,14 @@ error_by_reg_and_fold %>%
   ggplot(aes(MAE)) + 
     geom_histogram(bins = 30, colour="black", fill = "#FDE725FF") +
     facet_wrap(~Regression) +  
-    geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 8, by = 1)) + 
+    geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 8, by = 1)) +
     labs(title="Distribution of MAE", subtitle = "k-fold cross validation vs. LOGO-CV",
          x="Mean Absolute Error", y="Count") 
 ```
 
 
-# A table of MAE and standard deviation MAE by regression.
+## A table of MAE and standard deviation MAE by regression.
+As shown in the table below, the Mean Absolute Errors decrease when spatial process is accounted for. 
 
 ```{r}
 st_drop_geometry(error_by_reg_and_fold) %>%
@@ -585,7 +588,8 @@ st_drop_geometry(error_by_reg_and_fold) %>%
     row_spec(4, color = "black", background = "#FDE725FF") 
 ```
 
-# A table of raw errors by race context for a random k-fold vs. spatial cross validation regression.
+## A table of raw errors by race context for a random k-fold vs. spatial cross validation regression.
+Our model that accounts for spatial processes over-predicts in majority non-white areas, and it under-predicts in majority white areas. This is not an ideal result. Such a model may unfairly allocate police resources disproportionately in Black and Brown communities.  
 
 ```{r}
 reg.summary %>% 
@@ -602,7 +606,7 @@ reg.summary %>%
 ```
 
 
-# The map comparing kernel density to risk predictions for the next year's crime.
+# Comparing kernel density to risk predictions for 2018 robberies
 
 ```{r}
 burg_ppp <- as.ppp(st_coordinates(robberies), W = st_bbox(final_net))
@@ -622,7 +626,7 @@ as.data.frame(burg_KD) %>%
 ```
 
 
-```{r}
+```{r, include=FALSE}
 # Download 2018 robberies
 robberies18 <- st_read("https://opendata.arcgis.com/datasets/38ba41dd74354563bce28a359b59324e_0.geojson") %>%
   filter(OFFENSE == "ROBBERY") %>%
@@ -632,17 +636,17 @@ robberies18 <- st_read("https://opendata.arcgis.com/datasets/38ba41dd74354563bce
   st_as_sf(coords = c("LATITUDE", "LONGITUDE"), crs = 4326, agr = "constant")%>%
   st_transform('ESRI:102685') %>%
   distinct() %>%
-   .[fishnet,] #idk what this line does??
+   .[fishnet,] 
 
 ```
 
 ```{r}
-burg_ppp <- as.ppp(st_coordinates(robberies), W = st_bbox(final_net))
+rob_ppp <- as.ppp(st_coordinates(robberies), W = st_bbox(final_net))
 
 #spatstat.options(npixel=c(1000,1000))
-burg_KD <- spatstat::density.ppp(burg_ppp, 1000)
+rob_KD <- spatstat::density.ppp(rob_ppp, 1000)
 
-burg_KDE_sf <- as.data.frame(burg_KD) %>%
+rob_KDE_sf <- as.data.frame(rob_KD) %>%
   st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
   aggregate(., final_net, mean) %>%
   mutate(label = "Kernel Density",
@@ -655,13 +659,13 @@ burg_KDE_sf <- as.data.frame(burg_KD) %>%
            Risk_Category >= 1 & Risk_Category <= 29 ~ "1% to 29%")) %>%
   cbind(
     aggregate(
-      dplyr::select(robberies18) %>% mutate(burgCount = 1), ., sum) %>%
-    mutate(burgCount = replace_na(burgCount, 0))) %>%
-  dplyr::select(label, Risk_Category, burgCount)
+      dplyr::select(robberies18) %>% mutate(robCount = 1), ., sum) %>%
+    mutate(robCount = replace_na(robCount, 0))) %>%
+  dplyr::select(label, Risk_Category, robCount)
 ```
 
 ```{r}
-burg_risk_sf <-
+rob_risk_sf <-
   filter(reg.summary, Regression == "Spatial LOGO-CV: Spatial Process") %>%
   mutate(label = "Risk Predictions",
          Risk_Category = ntile(Prediction, 100),
@@ -673,13 +677,13 @@ burg_risk_sf <-
            Risk_Category >= 1 & Risk_Category <= 29 ~ "1% to 29%")) %>%
   cbind(
     aggregate(
-      dplyr::select(robberies18) %>% mutate(burgCount = 1), ., sum) %>%
-      mutate(burgCount = replace_na(burgCount, 0))) %>%
-  dplyr::select(label,Risk_Category, burgCount)
+      dplyr::select(robberies18) %>% mutate(robCount = 1), ., sum) %>%
+      mutate(robCount = replace_na(robCount, 0))) %>%
+  dplyr::select(label,Risk_Category, robCount)
 ```
 
 ```{r}
-rbind(burg_KDE_sf, burg_risk_sf) %>%
+rbind(rob_KDE_sf, rob_risk_sf) %>%
   na.omit() %>%
   gather(Variable, Value, -label, -Risk_Category, -geometry) %>%
   ggplot() +
@@ -693,8 +697,28 @@ rbind(burg_KDE_sf, burg_risk_sf) %>%
 ```
 
 
-# The bar plot making this comparison.
+## The bar plot making this comparison.
+The rate of 2018 robbery points by risk category and model type is calculated below. A well fit model should show that the risk predictions capture a greater share of 2018 robberies in the highest risk category relative to the kernel density. Unfortunately, our bar plot shows that the risk prediction model does not edge out the kernel density in the top 2 highest risk categories. It only does so for the 50 to 69% risk category, suggesting that this model does not have much value relative to the business-as-usual hotspot approach. 
+
+```{r}
+rbind(rob_KDE_sf, rob_risk_sf) %>%
+  st_set_geometry(NULL) %>% na.omit() %>%
+  gather(Variable, Value, -label, -Risk_Category) %>%
+  group_by(label, Risk_Category) %>%
+  summarize(countRobberies = sum(Value)) %>%
+  ungroup() %>%
+  group_by(label) %>%
+  mutate(Rate_of_test_set_crimes = countRobberies / sum(countRobberies)) %>%
+    ggplot(aes(Risk_Category,Rate_of_test_set_crimes)) +
+      geom_bar(aes(fill=label), position="dodge", stat="identity") +
+      scale_fill_viridis(discrete = TRUE) +
+      labs(title = "Risk prediction vs. Kernel density, 2018 burglaries") +
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+```
 
 
-# Two paragraphs on why or why not you would recommend your algorithm be put into production.
+# Conclusion 
 
+Our spatial process model reports lower errors overall as reflected by the Mean Absolute Errors, but does not generalize well with respect to race. It over-predicts in majority non-white areas, and it under-predicts in majority white areas. This is not an ideal result, and reflects the selection biases introduced into the model based on the Broken Windows Theory, which posits a link between community 'disorder'and crime. Built environment risk factors may impact crime risk, but many of these suffer from selection bias in part because of how likely people in different communities are likely to report on cases such as graffiti. Using the Broken Windows Theory to build a police allocation tool may result in disproportionate amounts of police resources being allocated to communities that are already suffering from disinvestment and oversurveillance, as a consequence of historically racist policies. 
+
+Furthermore, our risk prediction algorithm does not outperform traditional hot spot analysis for higher risk categories. Thus, it needs better feature engineering to make it a more effective model. Even then, selection bias in the model could lead to increased enforcement and surveillance in majority-minority neighborhoods. This could steer police towards these neighborhoods and increase reported crime, perpetuating a cycle of increased predicted risk and surveillance. Thus, our risk model might perpetuate some of these racist place-based policies -- an outcome we do not desire, and therefore would not recommend our algorithm being put into production. 
